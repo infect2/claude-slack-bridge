@@ -118,7 +118,7 @@ def handle_message(body, say):
             original_len = len(stdout)
             if original_len > SLACK_MESSAGE_LIMIT:
                 stdout = stdout[:SLACK_MESSAGE_LIMIT] + f"\n... (truncated, {original_len}자 중 {SLACK_MESSAGE_LIMIT}자 표시)"
-            logger.info("Slack Output: %d자", min(original_len, SLACK_MESSAGE_LIMIT))
+            logger.info("Slack Output:\n%s", stdout)
             say(stdout)
         elif stderr:
             err_msg = f"⚠️ Error: {stderr[:ERROR_PREVIEW_LIMIT]}"
