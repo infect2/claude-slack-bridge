@@ -35,7 +35,7 @@ Requires `claude` CLI to be in PATH.
 2. 사용자 메시지를 `claude -p --dangerously-skip-permissions` 명령으로 실행
 3. Claude CLI 출력을 Slack에 전송 (터미널에도 동시 출력)
 4. `-c` 플래그로 대화 컨텍스트를 유지 (세션 지속)
-5. `/new` 명령으로 세션 리셋 가능
+5. `!new` 명령으로 세션 리셋 가능
 
 ## Key Behaviors
 
