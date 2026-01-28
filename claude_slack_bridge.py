@@ -73,11 +73,13 @@ def handle_message(body, say):
         return
 
     if text.strip() == "!sleep":
+        logger.info("!sleep 명령 수신")
         stop_caffeinate()
         say("😴 Sleep 모드 허용됨. 노트북이 자연스럽게 sleep에 들어갈 수 있습니다.\n`!awake`로 다시 sleep 방지를 활성화하세요.")
         return
 
     if text.strip() == "!awake":
+        logger.info("!awake 명령 수신")
         start_caffeinate()
         say("☀️ Sleep 방지 활성화됨. 노트북이 sleep에 들어가지 않습니다.")
         return
