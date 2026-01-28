@@ -1,0 +1,103 @@
+= Claude Slack Bridge
+
+Slack 메시지를 Claude CLI에 전달하고 응답을 돌려주는 브릿지 봇.
+
+Slack Socket Mode로 동작하며, macOS `caffeinate`를 이용해 노트북 sleep을 제어한다.
+
+== 요구사항
+
+* Python 3.8+
+* macOS (caffeinate 사용)
+* https://docs.anthropic.com/en/docs/claude-code[Claude CLI] (`claude`)가 PATH에 있어야 함
+
+== 설치
+
+[source,bash]
+----
+pip install slack-bolt python-dotenv
+----
+
+== 환경 변수
+
+`.env` 파일을 프로젝트 루트에 생성한다.
+
+[source]
+----
+SLACK_APP_TOKEN=xapp-...
+SLACK_BOT_TOKEN=xoxb-...
+TARGET_CHANNEL_ID=C0123456789
+----
+
+[cols="1,3"]
+|===
+|변수 |설명
+
+|`SLACK_APP_TOKEN`
+|Slack App-level token (Socket Mode용, `xapp-` 접두사)
+
+|`SLACK_BOT_TOKEN`
+|Slack Bot token (`xoxb-` 접두사)
+
+|`TARGET_CHANNEL_ID`
+|메시지를 수신할 Slack 채널 ID
+|===
+
+== 실행
+
+[source,bash]
+----
+python claude_slack_bridge.py
+----
+
+시작 시 `caffeinate -i` 프로세스가 자동으로 실행되어 노트북 idle sleep을 방지한다.
+
+== Slack 명령어
+
+채널에 텍스트를 입력하면 Claude CLI에 전달된다. 아래 명령어는 특수 동작을 수행한다.
+
+[cols="1,3"]
+|===
+|명령어 |설명
+
+|`/new`
+|대화 세션 리셋. 이전 컨텍스트를 버리고 새 대화를 시작한다.
+
+|`/sleep`
+|`caffeinate` 종료. 노트북이 자연스럽게 sleep에 들어갈 수 있다. sleep 상태에서는 브릿지가 동작하지 않는다.
+
+|`/awake`
+|`caffeinate` 재시작. 노트북 sleep 방지를 다시 활성화한다. 노트북을 수동으로 깨운 뒤 사용한다.
+|===
+
+== 동작 방식
+
+. Slack Socket Mode로 대상 채널의 메시지를 수신
+. 사용자 메시지를 `claude -p --dangerously-skip-permissions` 명령으로 실행
+. 두 번째 메시지부터 `-c` 플래그로 대화 컨텍스트를 유지
+. Claude CLI 출력을 Slack에 전송 (터미널에도 동시 출력)
+. 응답이 3900자를 초과하면 truncate 처리
+. CLI 타임아웃: 120초
+
+== Sleep 제어
+
+[source]
+----
+브릿지 시작
+  └─ caffeinate -i 자동 실행 (sleep 방지)
+
+/sleep 입력
+  └─ caffeinate 종료 → 노트북 sleep 허용
+
+(노트북 수동 기상 후)
+/awake 입력
+  └─ caffeinate 재시작 → sleep 방지 재활성화
+
+브릿지 종료
+  └─ atexit로 caffeinate 자동 정리
+----
+
+== 주의사항
+
+* `--dangerously-skip-permissions` 모드로 실행되므로, Claude CLI가 파일 생성/수정/삭제 및 명령 실행을 확인 없이 수행한다.
+* 신뢰할 수 있는 사용자만 Slack 채널에 접근할 수 있도록 해야 한다.
+* sleep 상태에서는 Socket Mode 연결이 끊기므로 Slack 메시지로 노트북을 깨울 수 없다. 물리적 접근 또는 다른 방법으로 깨운 뒤 `/awake`를 사용한다.

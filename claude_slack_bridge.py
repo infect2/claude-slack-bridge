@@ -1,3 +1,4 @@
+import atexit
 import os
 import subprocess
 
@@ -14,6 +15,31 @@ TARGET_CHANNEL_ID = os.environ["TARGET_CHANNEL_ID"]
 app = App(token=SLACK_BOT_TOKEN)
 
 session_started = False
+caffeinate_proc = None
+
+
+def start_caffeinate():
+    global caffeinate_proc
+    if caffeinate_proc and caffeinate_proc.poll() is None:
+        return
+    caffeinate_proc = subprocess.Popen(["caffeinate", "-i"])
+    print(f"[Caffeinate] ➤ 시작됨 (PID: {caffeinate_proc.pid})")
+
+
+def stop_caffeinate():
+    global caffeinate_proc
+    if caffeinate_proc and caffeinate_proc.poll() is None:
+        caffeinate_proc.terminate()
+        caffeinate_proc.wait()
+        print("[Caffeinate] ➤ 종료됨")
+        caffeinate_proc = None
+
+
+def cleanup_caffeinate():
+    stop_caffeinate()
+
+
+atexit.register(cleanup_caffeinate)
 
 
 @app.event("message")
@@ -32,6 +58,16 @@ def handle_message(body, say):
         session_started = False
         print("[Session] ➤ 세션 리셋")
         say("🔄 세션이 리셋되었습니다. 새로운 대화를 시작합니다.")
+        return
+
+    if text.strip() == "/sleep":
+        stop_caffeinate()
+        say("😴 Sleep 모드 허용됨. 노트북이 자연스럽게 sleep에 들어갈 수 있습니다.\n`/awake`로 다시 sleep 방지를 활성화하세요.")
+        return
+
+    if text.strip() == "/awake":
+        start_caffeinate()
+        say("☀️ Sleep 방지 활성화됨. 노트북이 sleep에 들어가지 않습니다.")
         return
 
     print(f"[Slack Input] ➤ {text}")
@@ -81,8 +117,10 @@ def handle_message(body, say):
 
 
 if __name__ == "__main__":
+    start_caffeinate()
     print(f"🚀 Claude Bridge Active on {TARGET_CHANNEL_ID}")
     print("⚠️  WARNING: --dangerously-skip-permissions 모드로 실행 중입니다.")
     print("⚠️  Claude CLI가 파일 생성/수정/삭제, 명령 실행 등을 확인 없이 수행합니다.")
     print("⚠️  신뢰할 수 있는 사용자만 Slack 채널에 접근할 수 있도록 하세요.")
+    print("☕ caffeinate 활성화됨. /sleep, /awake 명령으로 제어 가능.")
     SocketModeHandler(app, SLACK_APP_TOKEN).start()
