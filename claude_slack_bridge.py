@@ -216,6 +216,19 @@ def handle_message(body, say):
             say("재실행할 명령이 없습니다.")
         return
 
+    if text.strip() == "!help":
+        logger.info("!help 명령 수신")
+        say(
+            "📋 *사용 가능한 명령어*\n"
+            "• `!new` — 세션 리셋 (새 대화 시작)\n"
+            "• `!stop` — 실행 중인 작업 중지\n"
+            "• `!retry` — 마지막 명령 재실행\n"
+            "• `!sleep` — Sleep 모드 허용\n"
+            "• `!awake` — Sleep 방지 활성화\n"
+            "• `!help` — 이 도움말 표시"
+        )
+        return
+
     logger.info("Slack Input: %s", text)
 
     thread = threading.Thread(target=run_claude, args=(text, say), daemon=True)
