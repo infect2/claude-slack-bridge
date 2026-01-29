@@ -2,6 +2,8 @@ import atexit
 import logging
 import os
 import subprocess
+import threading
+import time
 
 from dotenv import load_dotenv
 
@@ -12,9 +14,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-CLI_TIMEOUT_SECONDS = 120
+CLI_TIMEOUT_SECONDS = 300
 SLACK_MESSAGE_LIMIT = 3900
 ERROR_PREVIEW_LIMIT = 500
+HEALTHCHECK_INTERVAL = 30
+
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
@@ -28,6 +32,10 @@ app = App(token=SLACK_BOT_TOKEN)
 
 session_started = False
 caffeinate_proc = None
+
+current_process = None
+current_process_lock = threading.Lock()
+last_input_text = None
 
 
 def start_caffeinate():
@@ -52,6 +60,104 @@ def cleanup_caffeinate():
 
 
 atexit.register(cleanup_caffeinate)
+
+
+def healthcheck_loop(process, say, start_time):
+    while process.poll() is None:
+        time.sleep(HEALTHCHECK_INTERVAL)
+        if process.poll() is None:
+            elapsed = int(time.time() - start_time)
+            say(f"⏳ 작업 진행 중... (경과: {elapsed}초)")
+
+
+def run_claude(text, say):
+    global session_started, current_process, last_input_text
+
+    last_input_text = text
+
+    cmd = ["claude", "-p", "--dangerously-skip-permissions"]
+    if session_started:
+        cmd.append("-c")
+    cmd.append(text)
+
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        with current_process_lock:
+            current_process = process
+
+        start_time = time.time()
+        health_thread = threading.Thread(
+            target=healthcheck_loop,
+            args=(process, say, start_time),
+            daemon=True,
+        )
+        health_thread.start()
+
+        try:
+            stdout, stderr = process.communicate(timeout=CLI_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            with current_process_lock:
+                current_process = None
+            msg = f"⏱️ Timeout: {CLI_TIMEOUT_SECONDS}초 내에 응답이 없습니다."
+            logger.warning(msg)
+            say(msg)
+            return
+
+        with current_process_lock:
+            current_process = None
+
+        session_started = True
+
+        stdout = stdout.strip()
+        stderr = stderr.strip()
+
+        if process.returncode != 0:
+            # Check if killed by !stop
+            if process.returncode < 0:
+                return
+            err_msg = f"⚠️ CLI 오류 (exit code {process.returncode})"
+            if stderr:
+                err_msg += f": {stderr[:ERROR_PREVIEW_LIMIT]}"
+            elif stdout:
+                err_msg += f": {stdout[:ERROR_PREVIEW_LIMIT]}"
+            logger.warning("CLI 오류: exit code %d", process.returncode)
+            say(err_msg)
+        elif stdout:
+            if stderr:
+                logger.warning("stderr 출력 있음: %s", stderr[:ERROR_PREVIEW_LIMIT])
+            original_len = len(stdout)
+            if original_len > SLACK_MESSAGE_LIMIT:
+                stdout = stdout[:SLACK_MESSAGE_LIMIT] + f"\n... (truncated, {original_len}자 중 {SLACK_MESSAGE_LIMIT}자 표시)"
+            logger.info("Slack Output:\n%s", stdout)
+            say(stdout)
+        elif stderr:
+            err_msg = f"⚠️ Error: {stderr[:ERROR_PREVIEW_LIMIT]}"
+            logger.warning("Slack Output: %s", err_msg)
+            say(err_msg)
+        else:
+            logger.info("Slack Output: (응답 없음)")
+            say("(응답 없음)")
+
+    except FileNotFoundError:
+        with current_process_lock:
+            current_process = None
+        msg = "⚠️ `claude` CLI를 찾을 수 없습니다. PATH를 확인하세요."
+        logger.error(msg)
+        say(msg)
+    except Exception as e:
+        with current_process_lock:
+            current_process = None
+        msg = f"⚠️ 오류 발생: {str(e)[:ERROR_PREVIEW_LIMIT]}"
+        logger.exception("예상치 못한 오류 발생")
+        say(msg)
 
 
 @app.event("message")
@@ -84,62 +190,36 @@ def handle_message(body, say):
         say("☀️ Sleep 방지 활성화됨. 노트북이 sleep에 들어가지 않습니다.")
         return
 
+    if text.strip() == "!stop":
+        logger.info("!stop 명령 수신")
+        with current_process_lock:
+            proc = current_process
+        if proc and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            say("🛑 실행 중인 작업을 중지했습니다.")
+        else:
+            say("실행 중인 작업이 없습니다.")
+        return
+
+    if text.strip() == "!retry":
+        logger.info("!retry 명령 수신")
+        if last_input_text:
+            say(f"🔁 재실행: {last_input_text[:100]}")
+            thread = threading.Thread(target=run_claude, args=(last_input_text, say), daemon=True)
+            thread.start()
+        else:
+            say("재실행할 명령이 없습니다.")
+        return
+
     logger.info("Slack Input: %s", text)
 
-    try:
-        cmd = ["claude", "-p", "--dangerously-skip-permissions"]
-        if session_started:
-            cmd.append("-c")
-        cmd.append(text)
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=CLI_TIMEOUT_SECONDS,
-        )
-
-        session_started = True
-
-        stdout = result.stdout.strip()
-        stderr = result.stderr.strip()
-
-        if result.returncode != 0:
-            err_msg = f"⚠️ CLI 오류 (exit code {result.returncode})"
-            if stderr:
-                err_msg += f": {stderr[:ERROR_PREVIEW_LIMIT]}"
-            elif stdout:
-                err_msg += f": {stdout[:ERROR_PREVIEW_LIMIT]}"
-            logger.warning("CLI 오류: exit code %d", result.returncode)
-            say(err_msg)
-        elif stdout:
-            if stderr:
-                logger.warning("stderr 출력 있음: %s", stderr[:ERROR_PREVIEW_LIMIT])
-            original_len = len(stdout)
-            if original_len > SLACK_MESSAGE_LIMIT:
-                stdout = stdout[:SLACK_MESSAGE_LIMIT] + f"\n... (truncated, {original_len}자 중 {SLACK_MESSAGE_LIMIT}자 표시)"
-            logger.info("Slack Output:\n%s", stdout)
-            say(stdout)
-        elif stderr:
-            err_msg = f"⚠️ Error: {stderr[:ERROR_PREVIEW_LIMIT]}"
-            logger.warning("Slack Output: %s", err_msg)
-            say(err_msg)
-        else:
-            logger.info("Slack Output: (응답 없음)")
-            say("(응답 없음)")
-
-    except subprocess.TimeoutExpired:
-        msg = f"⏱️ Timeout: {CLI_TIMEOUT_SECONDS}초 내에 응답이 없습니다."
-        logger.warning(msg)
-        say(msg)
-    except FileNotFoundError:
-        msg = "⚠️ `claude` CLI를 찾을 수 없습니다. PATH를 확인하세요."
-        logger.error(msg)
-        say(msg)
-    except Exception as e:
-        msg = f"⚠️ 오류 발생: {str(e)[:ERROR_PREVIEW_LIMIT]}"
-        logger.exception("예상치 못한 오류 발생")
-        say(msg)
+    thread = threading.Thread(target=run_claude, args=(text, say), daemon=True)
+    thread.start()
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Slack bot that bridges Slack messages to the Claude CLI tool, allowing users to interact with Claude through Slack.
 
-- **claude_slack_bridge.py** — `subprocess.run`으로 Claude CLI를 호출하고, Slack Socket Mode로 메시지를 주고받는 구현
+- **claude_slack_bridge.py** — `subprocess.Popen`으로 Claude CLI를 비동기 호출하고, Slack Socket Mode로 메시지를 주고받는 구현
 
 Slack Socket Mode (not HTTP webhooks)를 사용하며, `claude` CLI binary와 통신합니다.
 
@@ -32,13 +32,15 @@ Requires `claude` CLI to be in PATH.
 ## Architecture
 
 1. Slack Socket Mode로 대상 채널의 메시지를 수신
-2. 사용자 메시지를 `claude -p --dangerously-skip-permissions` 명령으로 실행
-3. Claude CLI 출력을 Slack에 전송 (터미널에도 동시 출력)
-4. `-c` 플래그로 대화 컨텍스트를 유지 (세션 지속)
-5. `!new` 명령으로 세션 리셋 가능
+2. 사용자 메시지를 `subprocess.Popen` + 별도 스레드로 비동기 실행
+3. 실행 중 30초 간격으로 health check 메시지 전송
+4. Claude CLI 출력을 Slack에 전송 (터미널에도 동시 출력)
+5. `-c` 플래그로 대화 컨텍스트를 유지 (세션 지속)
+6. `!new` 세션 리셋, `!stop` 프로세스 강제 종료, `!retry` 마지막 명령 재실행
 
 ## Key Behaviors
 
 - 응답이 3900자를 초과하면 truncate 처리
-- CLI 타임아웃: 120초
+- CLI 타임아웃: 300초
 - 봇 자신의 메시지는 무시 (`bot_id` 체크)
+- 실행 중 30초마다 진행 상황 메시지 전송 (health check)

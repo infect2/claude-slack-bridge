@@ -117,16 +117,24 @@ python claude_slack_bridge.py
 
 |`!awake`
 |`caffeinate` 재시작. 노트북 sleep 방지를 다시 활성화한다. 노트북을 수동으로 깨운 뒤 사용한다.
+
+|`!stop`
+|현재 실행 중인 Claude CLI 프로세스를 강제 종료한다.
+
+|`!retry`
+|마지막으로 전송한 메시지를 다시 실행한다. `!stop` 후 재실행할 때 유용하다.
 |===
 
 == 동작 방식
 
 . Slack Socket Mode로 대상 채널의 메시지를 수신
-. 사용자 메시지를 `claude -p --dangerously-skip-permissions` 명령으로 실행
+. 사용자 메시지를 `subprocess.Popen` + 별도 스레드로 비동기 실행
+. 실행 중 30초 간격으로 health check 메시지 전송 ("⏳ 작업 진행 중...")
 . 두 번째 메시지부터 `-c` 플래그로 대화 컨텍스트를 유지
 . Claude CLI 출력을 Slack에 전송 (터미널에도 동시 출력)
 . 응답이 3900자를 초과하면 truncate 처리
-. CLI 타임아웃: 120초
+. CLI 타임아웃: 300초
+. `!stop`으로 실행 중인 프로세스 강제 종료, `!retry`로 마지막 명령 재실행 가능
 
 == Sleep 제어
 
